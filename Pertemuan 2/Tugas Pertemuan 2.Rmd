@@ -1,0 +1,226 @@
+---
+title: "Tugas Praktikum"
+output: html_document
+---
+
+## Tugas
+
+1.  Setiap kelompok memilih satu data time series dengan panjang ≥ 500 periode.
+
+2.  Data dibagi rata ke setiap anggota; minimal 100 observasi per orang.
+
+3.  Terapkan metode pemulusan yang sudah dipelajari (SMA, DMA, SES, DES, atau Holt-Winters) pada bagian data masing-masing
+
+4.  Bandingkan kinerja metode dan tentukan metode terbaik untuk data tersebut menggunakan metrik akurasi (mis. SSE/MSE/RMSE/MAPE), lalu jelaskan alasannya secara singkat.
+
+    Upload tugas per individu ke GitHub pada folder `Pertemuan-2` dengan format HTML bernama `Tugas-Pertemuan-2.html`.
+
+## 1. Preparation & Library Loading
+Langkah awal adalah memanggil packages yang dibutuhkan untuk analisis pemulusan deret waktu (time series smoothing).
+
+```{r}
+library(rio)        # Untuk impor data (CSV, XLSX, dll)
+library(forecast)   # Untuk fungsi pemulusan SES, DES, & Holt-Winters
+library(TTR)        # Untuk fungsi Moving Average (SMA/DMA)
+library(ggplot2)    # Untuk visualisasi interaktif & rapi
+library(knitr)      # Untuk pembuatan tabel ringkas
+```
+
+## 2. Impor & Pemrosesan Data
+```{r}
+# 1. Impor File Data
+data_raw <- import("^JKSE_historis.csv")
+
+# 2. Bagi data menjadi 5 bagian dan ambil bagian ke-2
+total_n   <- nrow(data_raw)
+start_idx <- floor(1 * total_n / 5) + 1  # Mulai baris ke-240
+end_idx   <- floor(2 * total_n / 5)      # Sampai baris ke-479
+
+# Slicing data khusus bagian ke-2 (sekitar 240 observasi)
+data_bagian2 <- data_raw[start_idx:end_idx, ]
+
+# 3. Ambil variabel harga target (sesuaikan kolom: Close / Terakhir)
+y_vec <- data_bagian2$Close
+
+# 4. Ubah ke format deret waktu (ts)
+data_ts <- ts(y_vec)
+
+# 5. Informasi data bagian ke-2
+cat("Rentang Baris Data :", start_idx, "s/d", end_idx, "\n")
+cat("Total Observasi    :", length(y_vec), "data\n")
+head(data_bagian2)
+```
+
+## 3. Eksplorasi Data Deret Waktu
+Melihat ringkasan statistik dan pola visual keseluruhan data historis.
+
+```{r}
+# Ringkasan Statistik
+summary(data_ts)
+
+# Plot Utama Deret Waktu
+plot(data_ts, col = "darkblue", lwd = 2,
+     main = "Plot Deret Waktu Data Aktual",
+     xlab = "Periode Waktu", ylab = "Nilai Observasi")
+grid()
+```
+
+## 4. Pembagian Data Train & Test (80:20)
+Pembagian dilakukan secara dinamis berdasarkan proporsi 80% data latih (training) dan 20% data uji (testing).
+
+```{r}
+n <- length(data_ts)
+n_train <- floor(0.8 * n)
+n_test <- n - n_train
+
+# Membagi data vektor
+train_data <- y_vec[1:n_train]
+test_data  <- y_vec[(n_train + 1):n]
+
+# Membagi format Time Series
+train_ts <- ts(train_data)
+test_ts  <- ts(test_data)
+
+cat("Jumlah Total Data  :", n, "\n")
+cat("Jumlah Data Latih  :", n_train, "\n")
+cat("Jumlah Data Uji    :", n_test, "\n")
+```
+
+## 5. Pemodelan & Pemulusan (Smoothing)
+
+Berikut adalah penerapan 4 metode pemulusan utama pada data latih:
+
+### 5.1 Single Moving Average (SMA) — $m = 4$Metode ini cocok untuk data dengan pola stasioner (tanpa tren tajam atau musiman).
+
+```{r}
+m <- 4
+sma_fit <- SMA(train_ts, n = m)
+
+# Ramalan h-langkah ke depan untuk data uji (konstan sebesar nilai pemulusan terakhir)
+sma_forecast <- rep(tail(sma_fit[!is.na(sma_fit)], 1), n_test)
+```
+
+### 5.2 Double Moving Average (DMA) — $m = 4$Metode pemulusan dua kali yang efektif untuk menangkap tren linier sederhana.
+
+```{r}
+dma_1 <- SMA(train_ts, n = m)
+dma_2 <- SMA(dma_1, n = m)
+
+# Komponen Level (At) dan Tren (Bt)
+At <- 2 * dma_1 - dma_2
+Bt <- (2 / (m - 1)) * (dma_1 - dma_2)
+
+# Ramalan h-langkah ke depan untuk data uji
+h <- 1:n_test
+last_At <- tail(At[!is.na(At)], 1)
+last_Bt <- tail(Bt[!is.na(Bt)], 1)
+
+dma_forecast <- last_At + (last_Bt * h)
+```
+
+### 5.3 Single Exponential Smoothing (SES) - Parameter OptimalSES memberikan bobot mengecil secara eksponensial pada pengamatan historis. Parameter $\alpha$ dioptimalkan secara otomatis.
+
+```{r}
+ses_opt <- HoltWinters(train_ts, beta = FALSE, gamma = FALSE)
+ses_pred <- forecast(ses_opt, h = n_test)
+
+ses_forecast <- as.numeric(ses_pred$mean)
+```
+
+### 5.4 Double Exponential Smoothing (DES) - Parameter Optimal
+Metode Holt's Exponential Smoothing merespons pola data yang memiliki tren.
+
+```{r}
+des_opt <- HoltWinters(train_ts, gamma = FALSE)
+des_pred <- forecast(des_opt, h = n_test)
+
+des_forecast <- as.numeric(des_pred$mean)
+```
+
+
+## 6. Visualisasi Hasil Peramalan pada Data Uji
+Perbandingan visual antara nilai aktual data uji dengan hasil peramalan dari masing-masing metode pemulusan.
+
+```{r}
+df_plot <- data.frame(
+  Periode = (n_train + 1):n,
+  Aktual  = test_data,
+  SMA     = sma_forecast,
+  DMA     = dma_forecast,
+  SES     = ses_forecast,
+  DES     = des_forecast
+)
+
+ggplot(df_plot, aes(x = Periode)) +
+  geom_line(aes(y = Aktual, color = "Aktual"), size = 1.2) +
+  geom_line(aes(y = SMA, color = "SMA (m=4)"), linetype = "dashed", size = 0.9) +
+  geom_line(aes(y = DMA, color = "DMA (m=4)"), linetype = "dashed", size = 0.9) +
+  geom_line(aes(y = SES, color = "SES Optimal"), linetype = "dotted", size = 1) +
+  geom_line(aes(y = DES, color = "DES Optimal"), linetype = "solid", size = 0.9) +
+  labs(title = "Perbandingan Hasil Peramalan pada Data Uji",
+       x = "Periode Waktu", y = "Nilai Data") +
+  scale_color_manual(values = c("Aktual" = "black", "SMA (m=4)" = "red", 
+                                "DMA (m=4)" = "blue", "SES Optimal" = "green", 
+                                "DES Optimal" = "purple")) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+## 7. Evaluasi Akurasi Pemodelan (Data Uji)
+Fungsi evaluasi akurasi menggunakan Sum of Squared Errors (SSE), Mean Squared Error (MSE), Root Mean Squared Error (RMSE), dan Mean Absolute Percentage Error (MAPE).
+
+```{r}
+calc_metrics <- function(actual, forecast) {
+  e <- actual - forecast
+  sse  <- sum(e^2, na.rm = TRUE)
+  mse  <- mean(e^2, na.rm = TRUE)
+  rmse <- sqrt(mse)
+  mape <- mean(abs(e / actual) * 100, na.rm = TRUE)
+  return(c(SSE = sse, MSE = mse, RMSE = rmse, MAPE_Persen = mape))
+}
+
+# Perhitungan Metrik Evaluasi pada Data Uji
+acc_sma <- calc_metrics(test_data, sma_forecast)
+acc_dma <- calc_metrics(test_data, dma_forecast)
+acc_ses <- calc_metrics(test_data, ses_forecast)
+acc_des <- calc_metrics(test_data, des_forecast)
+
+# Penyusunan Tabel Perbandingan Metrik Evaluasi
+tabel_akurasi <- data.frame(
+  Metode = c("Single Moving Average (SMA)", 
+             "Double Moving Average (DMA)", 
+             "Single Exponential Smoothing (SES)", 
+             "Double Exponential Smoothing (DES)"),
+  rbind(acc_sma, acc_dma, acc_ses, acc_des)
+)
+
+kable(tabel_akurasi, digits = 4, caption = "Tabel Evaluasi Akurasi Peramalan Data Uji")
+```
+
+## 8. Kesimpulan & Penjelasan Metode Terbaik
+
+Berdasarkan hasil evaluasi kriteria keakuratan peramalan pada **Data Uji (Testing Data)**, berikut adalah ringkasan performa masing-masing metode:
+
+* **Single Moving Average (SMA):** MAPE = **12,76%** | RMSE = **1079,19**
+* **Single Exponential Smoothing (SES):** MAPE = **12,80%** | RMSE = **1086,59**
+* **Double Moving Average (DMA):** MAPE = **15,82%** | RMSE = **1401,92**
+* **Double Exponential Smoothing (DES):** MAPE = **45,19%** | RMSE = **3838,81**
+
+---
+
+### Kesimpulan
+Metode terbaik untuk memodelkan data ini adalah **Single Moving Average (SMA)** dengan nilai parameter $m = 4$. Metode ini menghasilkan tingkat kesalahan (*error*) terendah di seluruh metrik evaluasi pada data uji:
+* **SSE:** 279.516.409
+* **MSE:** 1.164.652
+* **RMSE:** 1.079,19
+* **MAPE:** 12,76%
+
+Metode **Single Exponential Smoothing (SES)** memberikan hasil yang hampir setara dengan nilai MAPE sebesar 12,80%.
+
+---
+
+### Analisis & Penjelasan Statistik
+1. **Karakteristik Pola Data:** Performa metode pemulusan tunggal (SMA dan SES) yang lebih unggul dibanding pemulusan ganda (DMA dan DES) mengindikasikan bahwa pergerakan data historis pada periode uji cenderung stasioner (konstan) secara lokal dan tidak memiliki tren linier naik/turun yang curam dalam jangka panjang.
+2. **Kelemahan Pemulusan Ganda (DMA & DES):** Metode DMA dan DES dirancang khusus untuk menangkap data berpolakan tren. Pada data ini, asumsi tren yang diproyeksikan ke depan oleh DES justru mengalami *overshooting* (penyimpangan jauh dari nilai aktual), sehingga menghasilkan MAPE yang sangat besar yaitu 45,19%.
+3. **Implikasi Peramalan:** Untuk peramalan jangka pendek (*short-term forecasting*) pada data ini, pendekatan berbasis pemulusan tunggal seperti **SMA ($m=4$)** atau **SES** jauh lebih stabil dan akurat karena merata-ratakan nilai tanpa memaksakan arah tren linier yang tidak konsisten.
+
