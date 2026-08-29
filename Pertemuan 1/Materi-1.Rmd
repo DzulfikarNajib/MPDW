@@ -97,9 +97,7 @@ dev.off()
 ```
 
 ## Moving Average
-
 ### Pembagian Data
-
 Pembagian data latih dan data uji dilakukan dengan perbandingan 80% data latih dan 20% data uji.
 
 ```{r}
@@ -146,7 +144,7 @@ ggplot() +
                       values = c("blue", "red")) + 
   theme_bw() + theme(legend.position = "bottom",
                      plot.caption = element_text(hjust=0.5, size=12))
- 
+
 ```
 
 ### Single Moving Average (SMA)

@@ -635,30 +635,27 @@ kable(tabel_akurasi, digits = 4, caption = &quot;Tabel Evaluasi Akurasi Peramala
 </div>
 <div id="kesimpulan-penjelasan-metode-terbaik" class="section level2">
 <h2>8. Kesimpulan &amp; Penjelasan Metode Terbaik</h2>
-<p>Berdasarkan hasil evaluasi kriteria keakuratan peramalan pada
-<strong>Data Uji (Testing Data)</strong>, berikut adalah ringkasan
-performa masing-masing metode:</p>
+<p>Berdasarkan hasil evaluasi kriteria keakuratan peramalan pada Data
+Uji (Testing Data), berikut adalah ringkasan performa masing-masing
+metode:</p>
 <ul>
-<li><strong>Single Moving Average (SMA):</strong> MAPE =
-<strong>12,76%</strong> | RMSE = <strong>1079,19</strong></li>
-<li><strong>Single Exponential Smoothing (SES):</strong> MAPE =
-<strong>12,80%</strong> | RMSE = <strong>1086,59</strong></li>
-<li><strong>Double Moving Average (DMA):</strong> MAPE =
-<strong>15,82%</strong> | RMSE = <strong>1401,92</strong></li>
-<li><strong>Double Exponential Smoothing (DES):</strong> MAPE =
-<strong>45,19%</strong> | RMSE = <strong>3838,81</strong></li>
+<li>Single Moving Average (SMA): MAPE = 1.69% | RMSE = 145.45</li>
+<li>Single Exponential Smoothing (SES): MAPE = 2.07% | RMSE =
+173.57</li>
+<li>Double Exponential Smoothing (DES): MAPE = 5.66% | RMSE =
+453.99</li>
+<li>Double Moving Average (DMA): MAPE = 9.13% | RMSE = 727.92</li>
 </ul>
 <hr />
 <div id="kesimpulan" class="section level3">
 <h3>Kesimpulan</h3>
 <p>Metode terbaik untuk memodelkan data ini adalah <strong>Single Moving
 Average (SMA)</strong> dengan nilai parameter <span class="math inline">\(m = 4\)</span>. Metode ini menghasilkan tingkat
-kesalahan (<em>error</em>) terendah di seluruh metrik evaluasi pada data
-uji: * <strong>SSE:</strong> 279.516.409 * <strong>MSE:</strong>
-1.164.652 * <strong>RMSE:</strong> 1.079,19 * <strong>MAPE:</strong>
-12,76%</p>
+kesalahan (error) terendah di seluruh metrik evaluasi pada data uji: *
+<strong>SSE:</strong> 1015477 * <strong>MSE:</strong> 21155.78 *
+<strong>RMSE:</strong> 145.45 * <strong>MAPE:</strong> 1.69%</p>
 <p>Metode <strong>Single Exponential Smoothing (SES)</strong> memberikan
-hasil yang hampir setara dengan nilai MAPE sebesar 12,80%.</p>
+hasil yang hampir setara dengan nilai MAPE sebesar 2.07%.</p>
 <hr />
 </div>
 <div id="analisis-penjelasan-statistik" class="section level3">
@@ -673,7 +670,7 @@ linier naik/turun yang curam dalam jangka panjang.</li>
 DMA dan DES dirancang khusus untuk menangkap data berpolakan tren. Pada
 data ini, asumsi tren yang diproyeksikan ke depan oleh DES justru
 mengalami <em>overshooting</em> (penyimpangan jauh dari nilai aktual),
-sehingga menghasilkan MAPE yang sangat besar yaitu 45,19%.</li>
+sehingga menghasilkan MAPE yang sangat besar yaitu 9.13%.</li>
 <li><strong>Implikasi Peramalan:</strong> Untuk peramalan jangka pendek
 (<em>short-term forecasting</em>) pada data ini, pendekatan berbasis
 pemulusan tunggal seperti <strong>SMA (<span class="math inline">\(m=4\)</span>)</strong> atau <strong>SES</strong>

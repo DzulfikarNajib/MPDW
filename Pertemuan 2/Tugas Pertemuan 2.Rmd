@@ -198,29 +198,28 @@ kable(tabel_akurasi, digits = 4, caption = "Tabel Evaluasi Akurasi Peramalan Dat
 ```
 
 ## 8. Kesimpulan & Penjelasan Metode Terbaik
+Berdasarkan hasil evaluasi kriteria keakuratan peramalan pada Data Uji (Testing Data), berikut adalah ringkasan performa masing-masing metode:
 
-Berdasarkan hasil evaluasi kriteria keakuratan peramalan pada **Data Uji (Testing Data)**, berikut adalah ringkasan performa masing-masing metode:
-
-* **Single Moving Average (SMA):** MAPE = **12,76%** | RMSE = **1079,19**
-* **Single Exponential Smoothing (SES):** MAPE = **12,80%** | RMSE = **1086,59**
-* **Double Moving Average (DMA):** MAPE = **15,82%** | RMSE = **1401,92**
-* **Double Exponential Smoothing (DES):** MAPE = **45,19%** | RMSE = **3838,81**
+* Single Moving Average (SMA): MAPE = 1.69% | RMSE = 145.45
+* Single Exponential Smoothing (SES): MAPE = 2.07% | RMSE = 173.57
+* Double Exponential Smoothing (DES): MAPE = 5.66% | RMSE = 453.99
+* Double Moving Average (DMA): MAPE = 9.13% | RMSE = 727.92
 
 ---
 
 ### Kesimpulan
-Metode terbaik untuk memodelkan data ini adalah **Single Moving Average (SMA)** dengan nilai parameter $m = 4$. Metode ini menghasilkan tingkat kesalahan (*error*) terendah di seluruh metrik evaluasi pada data uji:
-* **SSE:** 279.516.409
-* **MSE:** 1.164.652
-* **RMSE:** 1.079,19
-* **MAPE:** 12,76%
+Metode terbaik untuk memodelkan data ini adalah **Single Moving Average (SMA)** dengan nilai parameter $m = 4$. Metode ini menghasilkan tingkat kesalahan (error) terendah di seluruh metrik evaluasi pada data uji:
+* **SSE:** 1015477
+* **MSE:** 21155.78
+* **RMSE:** 145.45
+* **MAPE:** 1.69%
 
-Metode **Single Exponential Smoothing (SES)** memberikan hasil yang hampir setara dengan nilai MAPE sebesar 12,80%.
+Metode **Single Exponential Smoothing (SES)** memberikan hasil yang hampir setara dengan nilai MAPE sebesar 2.07%.
 
 ---
 
 ### Analisis & Penjelasan Statistik
 1. **Karakteristik Pola Data:** Performa metode pemulusan tunggal (SMA dan SES) yang lebih unggul dibanding pemulusan ganda (DMA dan DES) mengindikasikan bahwa pergerakan data historis pada periode uji cenderung stasioner (konstan) secara lokal dan tidak memiliki tren linier naik/turun yang curam dalam jangka panjang.
-2. **Kelemahan Pemulusan Ganda (DMA & DES):** Metode DMA dan DES dirancang khusus untuk menangkap data berpolakan tren. Pada data ini, asumsi tren yang diproyeksikan ke depan oleh DES justru mengalami *overshooting* (penyimpangan jauh dari nilai aktual), sehingga menghasilkan MAPE yang sangat besar yaitu 45,19%.
+2. **Kelemahan Pemulusan Ganda (DMA & DES):** Metode DMA dan DES dirancang khusus untuk menangkap data berpolakan tren. Pada data ini, asumsi tren yang diproyeksikan ke depan oleh DES justru mengalami *overshooting* (penyimpangan jauh dari nilai aktual), sehingga menghasilkan MAPE yang sangat besar yaitu 9.13%.
 3. **Implikasi Peramalan:** Untuk peramalan jangka pendek (*short-term forecasting*) pada data ini, pendekatan berbasis pemulusan tunggal seperti **SMA ($m=4$)** atau **SES** jauh lebih stabil dan akurat karena merata-ratakan nilai tanpa memaksakan arah tren linier yang tidak konsisten.
 
