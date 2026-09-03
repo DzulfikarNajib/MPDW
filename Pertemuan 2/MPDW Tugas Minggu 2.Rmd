@@ -1,0 +1,212 @@
+---
+title: "MPDW Tugas Minggu 2"
+author: "Dzulfikar Najib"
+date: "2026-09-03"
+output: 
+  html_document:
+    theme: flatly
+    code_folding: hide
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+---
+
+# Install & Load Packages
+
+```{r}
+# 1. Install paket remotes jika belum ada
+# if (!require("remotes")) install.packages("remotes")
+
+# 2. Install package orcutt langsung dari arsip CRAN
+# remotes::install_version("orcutt", version = "2.3")
+```
+
+```{r}
+# install.packages("lmtest")  # Untuk uji Durbin-Watson
+# install.packages("HoRM")     # Untuk metode Hildreth-Lu
+```
+
+
+# Library
+
+```{r}
+library(lmtest)
+library(orcutt)
+library(HoRM)
+```
+
+# Input Data
+
+```{r}
+# Membaca file data IPM (sesuaikan nama/path file jika perlu)
+data <- read.csv("ipm_panel_long_2010_2021.csv")
+data
+```
+
+# Eksplorasi & Pemodelan OLS Awal:
+Mengambil data Jawa tengah dan Membuat model regresi linier sederhana/berganda awal antara variabel terikat ($Y$) dan variabel bebas ($X$).
+
+```{r}
+data.jateng <- subset(data, Provinsi == "JAWA TENGAH")
+str(data.jateng)
+model <- lm(IPM ~ Tahun, data = data.jateng)
+summary(model)
+```
+
+# Melakukan Uji Durbin-Watson
+
+Melakukan pengecekan sisaan OLS awal menggunakan Uji Durbin-Watson (DW-Test) atau plot ACF/PACF residual.
+
+1. Jika Nilai DW Lebih Kecil dari ($DW < d_U$). Arti: Terjadi autokorelasi positif.Penyebab: Pola error cenderung searah (jika error kemarin positif, hari ini kemungkinan besar positif).Efek: Standar error model menjadi terlalu kecil, membuat variabel independen terlihat signifikan padahal sebenarnya tidak.
+2. Jika Nilai DW Lebih Besar dari ($DW > 4 - d_U$). Arti: Terjadi autokorelasi negatif.Penyebab: Pola error cenderung berlawanan arah secara ekstrem (jika error kemarin positif, hari ini negatif).Efek: Kasus ini lebih jarang terjadi, namun tetap merusak validitas uji signifikansi (uji t dan uji F).
+3. Jika Nilai DW Berada di Antara ($d_L$) dan ($d_U$) Daerah Ragu-Ragu. Arti: Pengujian tidak menghasilkan kesimpulan pasti apakah ada autokorelasi atau tidak.
+
+```{r}
+dw_test <- dwtest(model)
+dw_test
+```
+
+Dari hasil uji DW-Test, didapatkan nilai p-value $< 0.05$ atau statistik DW berada di luar rentang bebas autokorelasi ($d_U < DW < 4 - d_U$), yang mengindikasikan adanya autokorelasi.
+
+
+# Penanganan Autokorelasi:
+Meng estimasi parameter autokorelasi $\rho$ menggunakan dua pendekatan sekaligus:
+
+## Metode Cochrane-Orcutt (iterasi hingga konvergen)
+
+```{r}
+modelCO <- cochrane.orcutt(model, convergence = 3)
+modelCO
+```
+
+```{r}
+y <- data.jateng$IPM
+x <- data.jateng$Tahun
+
+rho <- modelCO$rho
+y.transformed <- y[-1] - (y[-12] * rho)
+x.transformed <- x[-1] - (x[-12] * rho)
+model.t <- lm(y.transformed ~ x.transformed)
+summary(model.t)
+dwtest(model.t)
+```
+dari hasil uji DW-Test pada model Cochrane-Orcutt, didapatkan nilai p-value $> 0.05$ atau statistik DW berada di dalam rentang bebas autokorelasi ($d_U < DW < 4 - d_U$), yang mengindikasikan bahwa sisaan model sudah terbebas dari masalah autokorelasi.
+
+## Metode Hildreth-Lu (pencarian $\rho$ optimal via minimasi SSE)
+
+```{r}
+hildreth.lu.func <- function(r, model){
+  x <- model.matrix(model)[,-1]
+  y <- model.response(model.frame(model))
+  n <- length(y)
+  t <- 2:n
+  y <- y[t]-r*y[t-1]
+  x <- x[t]-r*x[t-1]
+  
+  return(lm(y~x))
+}
+
+# Mencari rho yang meminimumkan SSE
+r <- seq(0.1, 0.9, by = 0.1)
+tab <- data.frame("rho" = r, "SSE" = sapply(r, function(i){deviance(hildreth.lu.func(i, model))}))
+round(tab, 4)
+```
+
+Hasil pencarian awal menunjukkan bahwa nilai $\rho$ yang meminimalkan SSE berada di sekitar 0.5. Namun, untuk mendapatkan estimasi yang lebih presisi, dilakukan pencarian lanjutan pada rentang $\rho$ yang lebih tinggi.
+
+
+```{r}
+# Pencarian rho presisi tinggi
+rOpt <- seq(0.9, 0.99, by = 0.001)
+tabOpt <- data.frame("rho" = rOpt, "SSE" = sapply(rOpt, function(i){deviance(hildreth.lu.func(i, model))}))
+head(tabOpt[order(tabOpt$SSE),])
+```
+
+```{r}
+par(mfrow = c(1,1))
+plot(tab$SSE ~ tab$rho, type = "l", xlab = "Rho", ylab = "SSE")
+abline(v = tabOpt[tabOpt$SSE == min(tabOpt$SSE), "rho"], lty = 2, col = "red", lwd = 2)
+```
+
+
+```{r}
+# Mengambil rho optimal secara otomatis dari SSE terkecil
+rho_opt <- tabOpt[which.min(tabOpt$SSE), "rho"]
+modelHL <- hildreth.lu.func(rho_opt, model)
+summary(modelHL)
+
+dwtest(modelHL)
+```
+
+Karena nilai p-value $> 0.05$ atau statistik DW berada di dalam rentang bebas autokorelasi ($d_U < DW < 4 - d_U$), maka sisaan model Hildreth-Lu sudah terbebas dari masalah autokorelasi.
+
+# Langkah 4: Evaluasi dan Perbandingan Kebaikan Model
+
+Membandingkan kebaikan model OLS Awal, Cochrane-Orcutt, dan Hildreth-Lu berdasarkan nilai *Sum of Squared Errors* (SSE), statistik Durbin-Watson (DW), serta *p-value*.
+
+```{r}
+# 1. Ekstraksi Metrik Model OLS Awal
+sse_ols <- deviance(model)
+dw_ols  <- dwtest(model)$statistic
+p_ols   <- dwtest(model)$p.value
+
+# 2. Ekstraksi Metrik Model Cochrane-Orcutt
+sse_co  <- deviance(model.t)
+dw_co   <- dwtest(model.t)$statistic
+p_co    <- dwtest(model.t)$p.value
+
+# 3. Ekstraksi Metrik Model Hildreth-Lu
+sse_hl  <- deviance(modelHL)
+dw_hl   <- dwtest(modelHL)$statistic
+p_hl    <- dwtest(modelHL)$p.value
+
+# 4. Menyusun Tabel Perbandingan
+tabel_evaluasi <- data.frame(
+  Metode = c("OLS Awal", "Cochrane-Orcutt", "Hildreth-Lu"),
+  Rho = c("-", round(rho, 4), round(rho_opt, 4)),
+  SSE = c(round(sse_ols, 5), round(sse_co, 5), round(sse_hl, 5)),
+  DW_Statistik = c(round(dw_ols, 4), round(dw_co, 4), round(dw_hl, 4)),
+  p_value = c(format.pval(p_ols, digits = 4), 
+              format.pval(p_co, digits = 4), 
+              format.pval(p_hl, digits = 4))
+)
+
+tabel_evaluasi
+```
+
+Berdasarkan tabel evaluasi di atas, kedua metode penanganan autokorelasi (Cochrane-Orcutt dan Hildreth-Lu) berhasil menaikkan nilai statistik Durbin-Watson mendekati angka 2 dan menghasilkan $p\text{-value} > 0.05$, yang menunjukkan sisaan model sudah terbebas dari masalah autokorelasi. Model terbaik dipilih berdasarkan nilai SSE terkecil dan statistik DW yang paling mendekati 2.
+
+# Langkah 5: Ekstraksi Parameter & Formulasi Model Akhir
+
+Mengembalikan nilai intersep hasil transformasi ($\hat{\beta}_0^*$) ke bentuk model asal ($\hat{\beta}_0 = \frac{\hat{\beta}_0^*}{1 - \rho}$) untuk menyusun persamaan regresi IPM Jawa Tengah.
+
+## Mengambil parameter dari model terbaik (misal: Hildreth-Lu)
+```{r}
+b0_star <- coef(modelHL)[1]  # Intersep ter-transformasi
+b1      <- coef(modelHL)[2]  # Koefisien variabel Tahun
+```
+
+## Mengembalikan nilai Intersep ke bentuk asal
+```{r}
+b0_asal <- b0_star / (1 - rho_opt)
+```
+
+## Menampilkan Ringkasan Parameter Akhir
+```{r}
+cat("================ PARAMETER MODEL AKHIR ================\n")
+cat("Nilai Intersep Asal (b0) :", round(b0_asal, 4), "\n")
+cat("Nilai Koefisien Tahun (b1):", round(b1, 4), "\n")
+cat("Nilai Rho Terpilih        :", round(rho_opt, 4), "\n")
+cat("-------------------------------------------------------\n")
+cat("Persamaan Penduga IPM Jawa Tengah:\n")
+cat("IPM_hat =", round(b0_asal, 4), "+", round(b1, 4), "* Tahun\n")
+
+```
+
+**Interpretasi Model Akhir:**
+
+* Intersep ($\hat{\beta}_0 = `r round(b0_asal, 4)`$): Nilai dugaan IPM Provinsi Jawa Tengah pada tahun basis ($Tahun = 0$).
+
+* Koefisien Slope ($\hat{\beta}_1 = `r round(b1, 4)`$): Setiap kenaikan 1 unit tahun, rata-rata IPM Jawa Tengah diperkirakan mengalami peningkatan sebesar r round(b1, 4) unit, setelah mengontrol struktur autokorelasi deret waktu.
+
