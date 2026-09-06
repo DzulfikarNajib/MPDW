@@ -1,0 +1,334 @@
+---
+title: "Tugas Pertemuan 3"
+author: "Dzulfikar Najib"
+output:
+  html_document:
+    theme: yeti
+    toc: true
+    toc_float: true
+  word_document: default
+  pdf_document: default
+---
+
+
+# Tugas Individu
+
+**Instruksi:**
+
+1.  Gunakan dataset kualitas udara pada Google Drive: [[Link GDrive]](https://drive.google.com/drive/folders/18ZcJpGKzmwlw9zxGZjTtVnJV0Ufau23g?usp=drive_link)
+
+2.  Tetapkan AQI sebagai variabel dependen (Y), lalu pilih satu variabel polutan (CO, NO₂, O₃, PM10, PM2.5, atau SO₂) sebagai variabel independen (X).
+
+3.  Terapkan ketiga metode regresi dengan peubah lag yang sudah dipelajari (Koyck, DLM, dan ARDL). Tentukan lag optimum untuk masing-masing metode!
+
+4.  Lakukan evaluasi asumsi model dan bandingkan kinerja peramalan menggunakan metrik akurasi (MAPE) serta visualisasi grafik.
+
+5.  *Upload* *dataset* dan tugas per individu ke GitHub pada folder `Pertemuan-3` dengan format HTML bernama: `Tugas-Pertemuan-3.html` dan `.Rmd`.
+
+6.  **Deadline Pengumpulan:** Kamis, 10 September 2026, 23.59 WIB.
+
+# Pendahuluan & Penyiapan Library
+
+Pada analisis deret waktu dan ekonometrika, hubungan antara peubah respon ($Y$) dan peubah penjelas ($X$) seringkali tidak terjadi secara spontan pada periode waktu yang sama, melainkan membutuhkan selang waktu (lag). Model regresi dengan peubah lag digunakan untuk menangkap pengaruh masa lalu dari peubah penjelas maupun peubah respon itu sendiri.Dalam tugas ini, kita membandingkan tiga metode regresi peubah lag:
+1. Model Koyck (Koyck Model)
+2. Model Distributed Lag (DLM)
+3. Model Autoregressive Distributed Lag (ARDL)
+
+```{r}
+# Instalasi package jika belum ada
+# install.packages(c("rio", "dLagM", "dynlm", "car", "lmtest", "nortest", "ggplot2", "forecast", "dplyr"))
+
+# Penyiapan Library
+library(rio)        # Impor data
+library(dLagM)      # Pemodelan Koyck, DLM, ARDL
+library(dynlm)      # Regresi linier dinamik
+library(lmtest)     # Uji Autokorelasi (dwtest) & Heteroskedastisitas (bptest)
+library(car)        # Uji VIF dan diagnostik
+library(ggplot2)    # Visualisasi
+library(forecast)   # Evaluasi peramalan
+library(dplyr)      # Manipulasi data
+library(MLmetrics)  # Perhitungan metrik akurasi (MAPE)
+```
+
+# Impor dan Eksplorasi Data
+
+Data diimpor menggunakan perintah import() dari package rio. Sesuai instruksi, peubah dependen ($Y$) adalah AQI dan peubah independen ($X$) dapat dipilih dari salah satu polutan (misal: PM2.5).
+
+
+```{r}
+# Impor Data
+data_raw <- import("NewDelhi_Air_quality.csv")
+
+# Ambil peubah Y (AQI) dan X (pm25) serta bersihkan NA
+data <- data_raw[, c("AQI", "pm25")]
+data <- na.omit(data)
+data <- as.data.frame(data)
+
+# Membagi Data Latih (80%) dan Data Uji (20%)
+n <- nrow(data)
+n_train <- round(0.80 * n)
+
+train <- data[1:n_train, ]
+test  <- data[(n_train + 1):n, ]
+
+# Mengubah format data menjadi objek Time Series (ts)
+train.ts <- ts(train)
+test.ts  <- ts(test)
+data.ts  <- ts(data)
+```
+
+```{r}
+count(train)
+count(test)
+```
+
+Hasil dari membagikan data menjadi data latih dan data uji adalah sebagai berikut:
+58 baris data latih dan 14 baris data uji. Data latih digunakan untuk membangun model, sedangkan data uji digunakan untuk mengevaluasi kinerja model yang telah dibangun.
+
+```{r}
+train
+test
+```
+
+
+
+# Pemodelan Regresi Peubah Lag
+
+## Model Koyck
+
+Model Koyck mengasumsikan bahwa pengaruh peubah lag berkurang secara eksponensial seiring bertambahnya waktu ($k$). Bentuk umum persamaannya:$$Y_t = \alpha (1 - \lambda) + \beta_0 X_t + \lambda Y_{t-1} + v_t$$
+
+```{r}
+# Membangun Model Koyck
+model.koyck <- koyckDlm(x = train$pm25, y = train$AQI)
+summary(model.koyck)
+```
+
+1. Nilai Peluruhan ($\phi$ / $\lambda$)
+- Syarat Berhasil: Harus berada di rentang $0 < \phi < 1$.
+- Kondisi Data Kamu: Nilai phi = 0.8896. Ini berarti model berhasil dan valid sesuai teori Koyck, karena pengaruh PM2.5 masa lalu meluruh secara mulus (geometric decay) seiring waktu. Jika $\phi \ge 1$ atau $\phi \le 0$, model Koyck gagal secara teoritis.
+2.  Signifikansi Peubah ($p$-value)
+- Syarat Berhasil: $P$-value untuk $X_t$ (PM2.5) dan $Y_{t-1}$ (lag AQI) pada tabel summary() harus $< 0.05$.
+- Kondisi Data: Kedua peubah signifikan ($p \le 0.05$), artinya PM2.5 saat ini dan AQI kemarin terbukti nyata memengaruhi AQI hari ini.
+
+```{r}
+# Peramalan pada Data Testing
+fore.koyck <- dLagM::forecast(model = model.koyck, x = test$pm25, h = nrow(test))
+
+# Hitung Akurasi (MAPE)
+mape.koyck <- MAPE(fore.koyck$forecasts, test$AQI)
+cat("MAPE Model Koyck:", mape.koyck, "\n")
+```
+3. Tingkat Akurasi Peramalan (MAPE)
+- Syarat Berhasil: Semakin kecil nilai MAPE, semakin presisi hasil ramalan pada data testing.
+- Kondisi Data: Nilai MAPE = 0.1055 ($10.55\%$). Secara kriteria statistik, nilai ini tergolong sangat baik (di bawah atau mendekati $10\%$).
+
+**Kesimpulan:**
+Model Koyck dikatakan berhasil karena memenuhi ketiga syarat: nilai $\phi$ valid di rentang $(0,1)$, variabelnya signifikan, dan akurasi peramalannya tinggi dengan error hanya $10.55\%$.
+
+## Regression with Distributed Lag (DLM)
+
+Model DLM memperhitungkan pengaruh peubah $X$ pada saat $t$ serta $q$ periode lag sebelumnya ($X_{t-1}, X_{t-2}, \dots, X_{t-q}$).
+$$\text{Model DLM: } Y_t = \alpha + \beta_0 X_t + \beta_1 X_{t-1} + \dots + \beta_q X_{t-q} + \epsilon_t$$
+
+```{r}
+finiteDLMauto(formula = AQI ~ pm25, data = data.frame(train), 
+              q.min = 1, q.max = 14, model.type = "dlm", 
+              error.type = "AIC", trace = TRUE)
+```
+
+Pemilihan Lag Optimum ($q = 10$): Berhasil ditentukan berdasarkan kriteria AIC terkecil ($186.2653$) dari rentang pengujian lag 1 hingga 10. Ini menunjukkan bahwa nilai AQI dipengaruhi oleh riwayat konsentrasi PM2.5 hingga 10 periode ke belakang.
+
+```{r}
+model.dlm.opt <- dlm(x = train$pm25, y = train$AQI, q = 10)
+summary(model.dlm.opt)
+```
+
+```{r}
+# Peramalan DLM dengan memanggil namespace dLagM::
+fore.dlm.opt <- dLagM::forecast(model = model.dlm.opt, x = test$pm25, h = nrow(test))
+
+# Hitung MAPE
+mape.dlm.opt <- MAPE(fore.dlm.opt$forecasts, test$AQI)
+cat("MAPE Model DLM Optimum (q=10):", mape.dlm.opt, "\n")
+```
+**Akurasi Peramalan (MAPE = $0.1409$ / $14.09\%$):** Kinerja peramalan pada data testing tergolong baik (di rentang $10\% - 20\%$), yang berarti rata-rata kesalahan ramalan model DLM ini hanya sekitar $14\%$.
+
+**Status Model:** Model DLM optimum ($q = 10$) berhasil dibentuk dan valid untuk melakukan peramalan tanpa error (meskipun dari sisi presisi, model Koyck sebelumnya sedikit lebih unggul dengan MAPE $10.55\%$).
+
+## Autoregressive Distributed Lag (ARDL)
+
+Model ARDL menggabungkan pengaruh dari peubah independen masa lalu ($X$) dan peubah dependen masa lalu ($Y$).
+
+**Perhatian Notasi:**
+
+Pada *package* `dLagM` (khusus fungsi `ardlDlm`), aturannya adalah:
+- $p$ = panjang *lag* peubah independen ($X$ / PM2.5).
+- $q$ = panjang *lag* peubah dependen ($Y$ / AQI).
+
+### Pemodelan Awal (p = 1, q = 1)
+
+```{r}
+# Model ARDL awal dengan lag X = 1 dan lag Y = 1
+model.ardl <- ardlDlm(formula = AQI ~ pm25, data = train, p = 1, q = 1)
+summary(model.ardl)
+```
+
+**Lag Optimum ARDL**
+Kita bisa mencari kombinasi $p$ dan $q$ terbaik menggunakan fungsi ardlBoundOrders() berdasarkan nilai Akaike Information Criterion (AIC) terkecil.
+
+**Penentuan Lag Optimum ($p$ dan $q$)**
+Syarat Berhasil: Kombinasi lag peubah $X$ ($p$) dan peubah $Y$ ($q$) dipilih dari nilai AIC terkecil.
+
+```{r}
+# Penentuan kombinasi lag optimum
+model.ardl.auto <- ardlBoundOrders(data = data.frame(train), ic = "AIC", formula = AQI ~ pm25)
+```
+
+```{r}
+# Menarik kombinasi lag (p dan q) dengan AIC terkecil
+min_p <- c()
+for(i in 1:6){
+  min_p[i] <- min(model.ardl.auto$Stat.table[[i]])
+}
+q_opt <- which(min_p == min(min_p, na.rm = TRUE))
+p_opt <- which(model.ardl.auto$Stat.table[[q_opt]] == min(model.ardl.auto$Stat.table[[q_opt]], na.rm = TRUE))
+
+# Menampilkan tabel hasil lag optimum
+data.frame("Lag_Y_opt(q)" = q_opt, "Lag_X_opt(p)" = p_opt, "AIC" = model.ardl.auto$min.Stat)
+```
+
+
+Kondisi Data Kamu: Terpilih lag $p = 10$ (PM2.5) dan $q = 5$ (AQI) dengan nilai $\text{AIC} = 61.97934$. Ini menunjukkan nilai AQI dipengaruhi oleh dinamika PM2.5 hingga 10 periode lalu dan riwayat AQI hingga 5 periode lalu.
+
+Hasil tabel di atas menunjukkan:
+- Lag_Y_opt(q) = 5 (artinya lag peubah $Y$/AQI adalah $q = 5$).
+- Lag_X_opt(p) = 10 (artinya lag peubah $X$/PM2.5 adalah $p = 10$).
+
+**Pemodelan ARDL Optimum & Peramalan**
+
+```{r}
+# Membangun Model ARDL Optimum berdasarkan p_opt dan q_opt
+model.ardl.opt <- ardlDlm(formula = AQI ~ pm25, data = data.frame(train),
+                           p = 10, q = 5)
+summary(model.ardl.opt)
+
+# Peramalan Model ARDL Optimum pada Data Testing
+fore.ardl.opt <- dLagM::forecast(model = model.ardl.opt, x = test$pm25, h = nrow(test))
+
+# Hitung Akurasi (MAPE)
+mape.ardl.opt <- MAPE(fore.ardl.opt$forecasts, test$AQI)
+cat("MAPE Model ARDL Optimum (p=", p_opt, ", q=", q_opt, "):", mape.ardl.opt, "\n")
+```
+**Signifikansi Peubah ($p$-value)**
+- Syarat Berhasil: Peubah lag dikatakan berpengaruh nyata jika $p\text{-value} < 0.05$.
+- Kondisi Data Kamu:
+*Simultan ($F$-statistic):* Sangat signifikan ($p < 2.2 \times 10^{-16}$). Semua peubah lag secara bersama-sama berpengaruh nyata terhadap AQI.
+*Parsial:* Peubah yang berpengaruh signifikan ($p < 0.05$) adalah PM2.5 saat ini (pm25.t), PM2.5 lag 7 (pm25.7), PM2.5 lag 10 (pm25.10), dan AQI kemarin (AQI.1).
+
+**Kebaikan Model (Adjusted $R^2$)**
+- Syarat Berhasil: Semakin mendekati $100\%$, semakin kuat model menjelaskan variasi data.
+- Kondisi Data Kamu: Nilai Adjusted $R^2 = 0.9328$ ($93.28\%$). Sangat tinggi, artinya $93.28\%$ keragaman nilai AQI dapat dijelaskan oleh kombinasi lag PM2.5 dan lag AQI.
+
+**Tingkat Akurasi Peramalan (MAPE)**
+- Syarat Berhasil: Semakin kecil nilai MAPE, semakin presisi hasil ramalan pada data testing.
+- Kondisi Data Kamu: Nilai MAPE = $0.1437$ ($14.37\%$). Tergolong baik (berada di rentang $10\% - 20\%$).
+
+**Kesimpulan**
+Model ARDL Optimum ($p=10, q=5$) berhasil dibentuk dan sangat solid: memiliki kemampuan penjelas data training yang sangat tinggi ($93.28\%$) serta tingkat kesalahan ramalan yang rendah di data testing ($14.37\%$).
+
+# Uji Asumsi Sisaan (dynlm)
+
+**Terpenuhi jika:**
+1. Uji Autokorelasi (Durbin-Watson Test)
+Hipotesis: $H_0$: Tidak ada autokorelasi pada sisaan vs $H_1$: Ada autokorelasi.
+Kriteria: Syarat terpenuhi jika $p\text{-value} > 0.05$ (Gagal Tolak $H_0$).
+Interpretasi: Jika $p\text{-value} > 0.05$, artinya sisaan model saling bebas (independen) dan tidak mengalami masalah autokorelasi.
+2. Uji Heteroskedastisitas (Breusch-Pagan Test)
+Hipotesis: $H_0$: Ragam sisaan homogen (homoskedastisitas) vs $H_1$: Ragam sisaan tidak homogen.
+Kriteria: Syarat terpenuhi jika $p\text{-value} > 0.05$ (Gagal Tolak $H_0$).
+Interpretasi: Jika $p\text{-value} > 0.05$, ragam sisaan bernilai konstan di sepanjang periode pengamatan.
+3. Uji Normalitas (Shapiro-Wilk Test)
+Hipotesis: $H_0$: Sisaan berdistribusi normal vs $H_1$: Sisaan tidak berdistribusi normal.
+Kriteria: Syarat terpenuhi jika $p\text{-value} > 0.05$ (Gagal Tolak $H_0$).
+Interpretasi: Jika $p\text{-value} > 0.05$, sisaan penyebaran data memenuhi asumsi kenormalan.
+
+**Simpelnya:**
+- Uji Autokorelasi (Durbin-Watson / dwtest): Syarat terpenuhi jika $p\text{-value} > 0.05$ (Sisaan bebas dari autokorelasi).
+- Uji Heteroskedastisitas (Breusch-Pagan / bptest): Syarat terpenuhi jika $p\text{-value} > 0.05$ (Ragam sisaan homogen/konstan).
+- Uji Normalitas (Shapiro-Wilk / shapiro.test): Syarat terpenuhi jika $p\text{-value} > 0.05$ (Sisaan berdistribusi normal).
+
+```{r}
+# 1. UJI ASUMSI MODEL KOYCK (AQI ~ pm25 + AQI_t-1)
+model_koyck_dyn <- dynlm(AQI ~ pm25 + L(AQI), data = train.ts)
+
+dwtest(model_koyck_dyn)                   # Autokorelasi
+bptest(model_koyck_dyn)                   # Heteroskedastisitas
+shapiro.test(residuals(model_koyck_dyn))   # Normalitas
+
+# 2. UJI ASUMSI MODEL DLM OPTIMUM (q = 10)
+model_dlm_dyn <- dynlm(AQI ~ pm25 + L(pm25, 1:10), data = train.ts)
+
+dwtest(model_dlm_dyn)                     # Autokorelasi
+bptest(model_dlm_dyn)                     # Heteroskedastisitas
+shapiro.test(residuals(model_dlm_dyn))     # Normalitas
+
+# 3. UJI ASUMSI MODEL ARDL OPTIMUM (p = 10, q = 5)
+model_ardl_dyn <- dynlm(AQI ~ pm25 + L(pm25, 1:10) + L(AQI, 1:5), data = train.ts)
+
+dwtest(model_ardl_dyn)                    # Autokorelasi
+bptest(model_ardl_dyn)                    # Heteroskedastisitas
+shapiro.test(residuals(model_ardl_dyn))    # Normalitas
+```
+
+**Hasilnya:**
+1. Model Koyck (model_koyck_dyn):
+- Autokorelasi ($p < 0.05$): Terlanggar. Terjadi autokorelasi positif pada sisaan.
+- Heteroskedastisitas ($p > 0.05$): Terpenuhi. Ragam sisaan homogen (konstan).
+- Normalitas ($p > 0.05$): Terpenuhi. Sisaan berdistribusi normal.
+2. Model DLM Optimum (model_dlm_dyn):
+- Autokorelasi ($p < 0.05$): Terlanggar. Masih ada autokorelasi positif yang cukup kuat.
+- Heteroskedastisitas ($p > 0.05$): Terpenuhi. Ragam sisaan homogen.
+- Normalitas ($p > 0.05$): Terpenuhi. Sisaan berdistribusi normal.
+3. Model ARDL Optimum (model_ardl_dyn):
+- Autokorelasi ($p = 0.5090 > 0.05$): Terpenuhi. Sisaan terbukti saling bebas (independen).
+- Heteroskedastisitas ($p = 0.3211 > 0.05$): Terpenuhi. Ragam sisaan homogen.
+- Normalitas ($p = 0.5167 > 0.05$): Terpenuhi. Sisaan berdistribusi normal.
+
+**Kesimpulan**
+Penambahan lag peubah respon ($Y$) dan peubah penjelas ($X$) secara bersamaan pada model ARDL terbukti sukses menyerap seluruh ketergantungan antar-waktu pada data, sehingga menghasilkan perkiraan parameter yang paling unbiased dan valid secara ekonometrika/statistik.
+
+# Evaluasi & Visualisasi Grafik
+Membandingkan performa peramalan ketiga model menggunakan tabel MAPE dan grafik perbandingan nilai aktual vs peramalan.
+
+```{r}
+# 1. Tabel Ringkasan MAPE
+akurasi <- matrix(c(mape.koyck, mape.dlm.opt, mape.ardl.opt))
+row.names(akurasi) <- c("Koyck", "DLM Optimum", "ARDL Optimum")
+colnames(akurasi) <- c("MAPE")
+print(akurasi)
+
+# 2. Visualisasi Grafik
+plot(test$pm25, test$AQI, type="b", col="black", lwd=2,
+     ylab="AQI", xlab="PM2.5", main="Perbandingan Peramalan Model Regresi Lag")
+
+lines(test$pm25, fore.koyck$forecasts, col="red", type="b", pch=16)
+lines(test$pm25, fore.dlm.opt$forecasts, col="blue", type="b", pch=17)
+lines(test$pm25, fore.ardl.opt$forecasts, col="green", type="b", pch=18)
+
+legend("topleft", legend=c("Aktual", "Koyck", "DLM Optimum", "ARDL Optimum"),
+       col=c("black","red","blue","green"), lty=1, pch=c(1,16,17,18), cex=0.8)
+```
+1. Perbandingan Akurasi Peramalan (MAPE)
+- Model Koyck (MAPE = $10.55\%$): Menghasilkan tingkat kesalahan terkecil dibandingkan model lainnya. Peramalan data testing sangat presisi (hampir menyentuh batas $10\%$).
+- Model DLM Optimum (MAPE = $14.09\%$): Memiliki performa peramalan yang baik (rentang $10\% - 20\%$).
+- Model ARDL Optimum (MAPE = $14.37\%$): Berada di posisi ketiga untuk akurasi out-of-sample, namun tetap masuk dalam kategori akurasi peramalan yang baik.
+
+2. Pola Visualisasi Grafik
+- Model Koyck (Garis Merah): Cenderung lebih stabil dan konsisten berada rapat di sekitar garis aktual (garis hitam) pada rentang nilai AQI $21 - 23$.
+- Model DLM & ARDL (Garis Biru & Hijau): Mampu mengikuti lekukan dinamika data, tetapi memiliki kecenderungan overestimation (memprediksi AQI lebih tinggi dari nilai aktualnya) pada kisaran nilai PM2.5 $2.8 - 3.0$.
+
+**Kesimpulan & Rekomendasi Akhir**
+Terdapat trade-off (kompromi) antara kepatuhan asumsi statistik dan presisi peramalan:
+- Tujuan Peramalan Murni (Forecasting): Model Koyck direkomendasikan karena memberikan error peramalan terkecil ($10.55\%$) pada data testing.
+- Tujuan Pemodelan Inferensi & Validitas Teori: Model ARDL Optimum adalah yang paling valid secara statistik karena sukses meloloskan seluruh uji asumsi sisaan (bebas autokorelasi, ragam homogen, dan berdistribusi normal) dengan akurasi peramalan yang tetap tergolong baik ($14.37\%$).
