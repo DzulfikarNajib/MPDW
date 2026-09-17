@@ -1,0 +1,448 @@
+---
+title: "Tugas Pertemuan 4"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: false
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(TSA)
+set.seed(1234)
+n <- 300
+wn <- rnorm(n)
+```
+
+# Proses MA(2)
+
+Proses MA(2) dapat dituliskan sebagai berikut:
+
+\[
+y_t = c + e_t + \theta_1 e_{t-1} + \theta_2 e_{t-2}
+\]
+
+Akan dibangkitkan proses MA(2) dengan $\theta_1 = 0.4$ dan $\theta_2 = 0.6$ sebanyak 300 observasi dan $c = 0$.
+
+## Pembangkitan Proses MA(2)
+
+### Cara manual (loop)
+
+Karena diperlukan dua nilai awal untuk $e_{t-1}$ dan $e_{t-2}$, gunakan dua nilai pertama *white noise* sebagai nilai awal.
+
+```{r ma2-manual}
+theta1 <- 0.4
+theta2 <- 0.6
+
+ma2 <- wn
+ma2[1] <- wn[1]
+ma2[2] <- wn[2] + theta1 * wn[1]
+for (i in 3:n) {
+  ma2[i] <- wn[i] + theta1 * wn[i - 1] + theta2 * wn[i - 2]
+}
+ma2
+```
+
+### Cara arima.sim()
+
+```{r ma2-arimasim}
+ma2.sim <- arima.sim(list(order = c(0, 0, 2), ma = c(theta1, theta2)), n = n)
+ma2.sim
+```
+
+## Karakteristik MA(2)
+
+### Plot Time Series
+
+```{r ma2-ts}
+par(mfrow = c(1, 2))
+ts.plot(ma2, main = "MA(2) - manual")
+ts.plot(ma2.sim, main = "MA(2) - arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot time series tersebut, terlihat bahwa data MA(2) yang dibangkitkan berfluktuasi di sekitar rataan yang konstan, sehingga **stasioner dalam rataan**. Proses MA berorde berapa pun selalu stasioner karena hanya melibatkan kombinasi linear white noise yang jumlah lag-nya terbatas.
+
+### Plot ACF
+
+```{r ma2-acf}
+par(mfrow = c(1, 2))
+acf(ma2, main = "ACF MA(2) - manual")
+acf(ma2.sim, main = "ACF MA(2) - arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot ACF tersebut, terlihat bahwa plot ACF **cuts off** di lag ke-2, sesuai dengan teori bahwa ACF MA(q) terpotong tajam setelah lag q.
+
+### Plot PACF
+
+```{r ma2-pacf}
+par(mfrow = c(1, 2))
+pacf(ma2, main = "PACF MA(2) - manual")
+pacf(ma2.sim, main = "PACF MA(2) - arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot PACF tersebut, terlihat bahwa plot PACF cenderung **tails off** (meluruh secara bertahap), sesuai dengan teori untuk proses MA.
+
+### Plot EACF
+
+```{r ma2-eacf}
+TSA::eacf(ma2)
+TSA::eacf(ma2.sim)
+```
+
+Meskipun terdapat beberapa nilai 'x' di luar pola segitiga nol akibat variasi sampling pada data hasil simulasi (n=300), pola dominan tetap konsisten dengan orde model MA(2) yang dibangkitkan.
+
+## Scatterplot Antar Lag
+
+### Korelasi antara $Y_t$ dengan $Y_{t-1}$
+
+```{r ma2-lag1}
+yt_ma2 <- ma2[-1]
+yt_1_ma2 <- ma2[-n]
+plot(y = yt_ma2, x = yt_1_ma2, main = "Yt vs Yt-1 (MA(2))")
+cor(yt_ma2, yt_1_ma2)
+```
+
+Korelasi teoritis:
+
+\[
+\rho_1 = \frac{\theta_1(1+\theta_2)}{1+\theta_1^2+\theta_2^2} = \frac{0.4(1+0.6)}{1+0.4^2+0.6^2} = 0.4211
+\]
+
+### Korelasi antara $Y_t$ dengan $Y_{t-2}$
+
+```{r ma2-lag2}
+yt_ma2_2 <- ma2[-c(1, 2)]
+yt_2_ma2 <- ma2[-c(n - 1, n)]
+plot(y = yt_ma2_2, x = yt_2_ma2, main = "Yt vs Yt-2 (MA(2))")
+cor(yt_ma2_2, yt_2_ma2)
+```
+
+Korelasi teoritis:
+
+\[
+\rho_2 = \frac{\theta_2}{1+\theta_1^2+\theta_2^2} = \frac{0.6}{1.52} = 0.3947
+\]
+
+### Korelasi antara $Y_t$ dengan $Y_{t-3}$
+
+```{r ma2-lag3}
+yt_ma2_3 <- ma2[-c(1, 2, 3)]
+yt_3_ma2 <- ma2[-c(n - 2, n - 1, n)]
+plot(y = yt_ma2_3, x = yt_3_ma2, main = "Yt vs Yt-3 (MA(2))")
+cor(yt_ma2_3, yt_3_ma2)
+```
+
+Karena orde MA hanya sampai lag 2, secara teoritis $\rho_3 = 0$. Hasil korelasi dari data bangkitan cenderung mendekati 0, sesuai dengan teori bahwa MA(q) tidak berkorelasi untuk lag $> q$.
+
+### Rekap korelasi teoritis MA(2) dengan `ARMAacf()`
+
+R juga menyediakan fungsi `ARMAacf()` untuk menghitung ACF teoritis suatu model ARMA secara otomatis, tanpa perlu menurunkan rumus secara manual.
+
+```{r ma2-armaacf}
+ARMAacf(ma = c(theta1, theta2), lag.max = 3)
+```
+
+---
+
+# Proses AR(2)
+
+Proses AR(2) dapat dituliskan sebagai berikut:
+
+\[
+y_t = c + e_t + \phi_1 Y_{t-1} + \phi_2 Y_{t-2}
+\]
+
+Akan dibangkitkan proses AR(2) dengan $\phi_1 = 0.5$ dan $\phi_2 = 0.2$ sebanyak 300 observasi dan $c = 0$.
+
+## Pembangkitan Proses AR(2)
+
+### Cara manual (loop)
+
+```{r ar2-manual}
+phi1 <- 0.5
+phi2 <- 0.2
+
+ar2 <- wn
+ar2[1] <- wn[1]
+ar2[2] <- wn[2] + phi1 * ar2[1]
+for (i in 3:n) {
+  ar2[i] <- wn[i] + phi1 * ar2[i - 1] + phi2 * ar2[i - 2]
+}
+ar2
+```
+
+### Cara arima.sim()
+
+```{r ar2-arimasim}
+ar2.sim <- arima.sim(list(order = c(2, 0, 0), ar = c(phi1, phi2)), n = n)
+ar2.sim
+```
+
+## Karakteristik AR(2)
+
+### Plot Time Series
+
+```{r ar2-ts}
+par(mfrow = c(1, 2))
+ts.plot(ar2, main = "AR(2) - manual")
+ts.plot(ar2.sim, main = "AR(2) - arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot time series tersebut, terlihat bahwa data cenderung **stasioner dalam rataan** (berfluktuasi di sekitar nilai tengah yang konstan). Hal ini dapat diperkuat dengan mengecek akar-akar polinomial karakteristik AR:
+
+```{r ar2-root}
+polyroot(c(1, -phi1, -phi2))
+Mod(polyroot(c(1, -phi1, -phi2)))
+```
+
+Karena seluruh akar memiliki modulus $> 1$ (berada di luar lingkaran satuan), proses AR(2) ini **stasioner**.
+
+### Plot ACF
+
+```{r ar2-acf}
+par(mfrow = c(1, 2))
+acf(ar2, main = "ACF AR(2) - manual")
+acf(ar2.sim, main = "ACF AR(2) - arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot ACF tersebut, terlihat bahwa plot ACF **tails off** dan cenderung membentuk pola grafik sinus/eksponensial menurun, sesuai dengan teori proses AR.
+
+### Plot PACF
+
+```{r ar2-pacf}
+par(mfrow = c(1, 2))
+pacf(ar2, main = "PACF AR(2) - manual")
+pacf(ar2.sim, main = "PACF AR(2) - arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot PACF tersebut, terlihat bahwa plot PACF **cuts off** setelah lag ke-2, sejalan dengan teori bahwa PACF AR(p) terpotong tajam setelah lag p.
+
+### Plot EACF
+
+```{r ar2-eacf}
+TSA::eacf(ar2)
+TSA::eacf(ar2.sim)
+```
+
+Baris AR(2) menunjukkan pola segitiga nol yang cukup bersih, meski beberapa baris di sekitarnya masih menunjukkan sedikit variasi 'x' akibat sampling — hal ini wajar untuk data hasil simulasi berukuran terbatas.
+
+## Scatterplot Antar Lag
+
+### Korelasi antara $Y_t$ dengan $Y_{t-1}$
+
+```{r ar2-lag1}
+yt_ar2 <- ar2[-1]
+yt_1_ar2 <- ar2[-n]
+plot(y = yt_ar2, x = yt_1_ar2, main = "Yt vs Yt-1 (AR(2))")
+cor(yt_ar2, yt_1_ar2)
+```
+
+Korelasi teoritis (persamaan Yule-Walker):
+
+\[
+\rho_1 = \frac{\phi_1}{1-\phi_2} = \frac{0.5}{0.8} = 0.625
+\]
+
+### Korelasi antara $Y_t$ dengan $Y_{t-2}$
+
+```{r ar2-lag2}
+yt_ar2_2 <- ar2[-c(1, 2)]
+yt_2_ar2 <- ar2[-c(n - 1, n)]
+plot(y = yt_ar2_2, x = yt_2_ar2, main = "Yt vs Yt-2 (AR(2))")
+cor(yt_ar2_2, yt_2_ar2)
+```
+
+Korelasi teoritis:
+
+\[
+\rho_2 = \phi_1\rho_1+\phi_2\rho_0 = 0.5(0.625)+0.2(1) = 0.5125
+\]
+
+### Korelasi antara $Y_t$ dengan $Y_{t-3}$
+
+```{r ar2-lag3}
+yt_ar2_3 <- ar2[-c(1, 2, 3)]
+yt_3_ar2 <- ar2[-c(n - 2, n - 1, n)]
+plot(y = yt_ar2_3, x = yt_3_ar2, main = "Yt vs Yt-3 (AR(2))")
+cor(yt_ar2_3, yt_3_ar2)
+```
+
+Korelasi teoritis:
+
+\[
+\rho_3 = \phi_1\rho_2+\phi_2\rho_1 = 0.5(0.5125)+0.2(0.625) = 0.3813
+\]
+
+Berbeda dengan MA(2), korelasi AR(2) tidak langsung nol setelah lag tertentu, melainkan meluruh secara bertahap (tails off) mengikuti rekursi Yule-Walker di atas.
+
+### Rekap korelasi teoritis AR(2) dengan `ARMAacf()`
+
+```{r ar2-armaacf}
+ARMAacf(ar = c(phi1, phi2), lag.max = 3)
+```
+
+---
+
+# Proses ARMA(2,2)
+
+Proses ARMA(2,2) dapat dituliskan sebagai berikut:
+
+\[
+y_t = c + \phi_1 Y_{t-1} + \phi_2 Y_{t-2} + e_t + \theta_1 e_{t-1} + \theta_2 e_{t-2}
+\]
+
+Akan dibangkitkan proses ARMA(2,2) dengan $\phi_1 = 0.5$, $\phi_2 = 0.2$, $\theta_1 = 0.4$, dan $\theta_2 = 0.6$ sebanyak 300 observasi dan $c = 0$.
+
+## Pembangkitan Proses ARMA(2,2)
+
+### Cara manual (loop)
+
+```{r arma22-manual}
+arma22 <- wn
+arma22[1] <- wn[1]
+arma22[2] <- wn[2] + phi1 * arma22[1] + theta1 * wn[1]
+for (i in 3:n) {
+  arma22[i] <- phi1 * arma22[i - 1] + phi2 * arma22[i - 2] +
+    wn[i] + theta1 * wn[i - 1] + theta2 * wn[i - 2]
+}
+arma22
+```
+
+### Cara arima.sim()
+
+```{r arma22-arimasim}
+arma22.sim <- arima.sim(
+  list(order = c(2, 0, 2), ar = c(phi1, phi2), ma = c(theta1, theta2)),
+  n = n
+)
+arma22.sim
+```
+
+### Cara fungsi arma.sim() (fungsi umum pembangkit ARMA)
+
+Fungsi umum dari materi Pertemuan 4 juga dapat digunakan untuk membangkitkan model ini:
+
+```{r arma22-customfun}
+arma.sim <- function(n, macoef, arcoef) {
+  manum <- length(macoef)
+  arnum <- length(arcoef)
+  stopifnot(manum < n & arnum < n)
+  wn <- rnorm(n, sd = 0.5)
+  init <- max(manum, arnum)
+  arma <- wn[1:init]
+  for (i in (init + 1):n) {
+    mastart <- i - manum
+    maend <- i - 1
+    arstart <- i - arnum
+    arend <- i - 1
+    arma[i] <- sum(arcoef * arma[arstart:arend]) +
+      sum(macoef * wn[mastart:maend]) + wn[i]
+  }
+  return(arma)
+}
+
+arma22.fun <- arma.sim(n, macoef = c(theta1, theta2), arcoef = c(phi1, phi2))
+arma22.fun
+```
+
+## Karakteristik ARMA(2,2)
+
+### Plot Time Series
+
+```{r arma22-ts}
+par(mfrow = c(1, 2))
+ts.plot(arma22, main = "ARMA(2,2) - manual")
+ts.plot(arma22.sim, main = "ARMA(2,2) - arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Karena bagian AR(2)-nya menggunakan koefisien $\phi_1 = 0.5$ dan $\phi_2 = 0.2$ yang sama dengan bagian AR(2) sebelumnya (akar polinomial karakteristik berada di luar lingkaran satuan), model ARMA(2,2) ini juga **stasioner dalam rataan**, terlihat dari plot time series yang berfluktuasi di sekitar rataan konstan.
+
+### Plot ACF
+
+```{r arma22-acf}
+par(mfrow = c(1, 2))
+acf(arma22, main = "ACF ARMA(2,2) - manual")
+acf(arma22.sim, main = "ACF ARMA(2,2) - arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot ACF tersebut, terlihat bahwa model ARMA(2,2) hasil simulasi memiliki plot ACF yang **tails off**, sesuai dengan teori yang ada.
+
+### Plot PACF
+
+```{r arma22-pacf}
+par(mfrow = c(1, 2))
+pacf(arma22, main = "PACF ARMA(2,2) - manual")
+pacf(arma22.sim, main = "PACF ARMA(2,2) - arima.sim")
+par(mfrow = c(1, 1))
+```
+
+Berdasarkan plot PACF tersebut, terlihat bahwa model ARMA(2,2) hasil simulasi memiliki plot PACF yang **tails off**, sesuai dengan teori bahwa proses ARMA memiliki ACF maupun PACF yang sama-sama meluruh bertahap.
+
+### Plot EACF
+
+```{r arma22-eacf}
+TSA::eacf(arma22)
+TSA::eacf(arma22.sim)
+```
+
+Segitiga nol pada model ARMA(2,2) sedikit lebih sulit diidentifikasi dibanding model AR maupun MA murni karena adanya pengaruh dua komponen sekaligus, namun pola dominan tetap mengarah ke ordo AR(2) dan MA(2) yang dibangkitkan.
+
+## Scatterplot Antar Lag
+
+### Korelasi antara $Y_t$ dengan $Y_{t-1}$
+
+```{r arma22-lag1}
+yt_arma22 <- arma22[-1]
+yt_1_arma22 <- arma22[-n]
+plot(y = yt_arma22, x = yt_1_arma22, main = "Yt vs Yt-1 (ARMA(2,2))")
+cor(yt_arma22, yt_1_arma22)
+```
+
+### Korelasi antara $Y_t$ dengan $Y_{t-2}$
+
+```{r arma22-lag2}
+yt_arma22_2 <- arma22[-c(1, 2)]
+yt_2_arma22 <- arma22[-c(n - 1, n)]
+plot(y = yt_arma22_2, x = yt_2_arma22, main = "Yt vs Yt-2 (ARMA(2,2))")
+cor(yt_arma22_2, yt_2_arma22)
+```
+
+### Korelasi antara $Y_t$ dengan $Y_{t-3}$
+
+```{r arma22-lag3}
+yt_arma22_3 <- arma22[-c(1, 2, 3)]
+yt_3_arma22 <- arma22[-c(n - 2, n - 1, n)]
+plot(y = yt_arma22_3, x = yt_3_arma22, main = "Yt vs Yt-3 (ARMA(2,2))")
+cor(yt_arma22_3, yt_3_arma22)
+```
+
+Untuk model campuran seperti ARMA(2,2), rumus korelasi teoritis manual cukup rumit karena harus menggabungkan komponen AR dan MA sekaligus. Cara paling praktis adalah memakai fungsi `ARMAacf()` yang menghitung ACF teoritis untuk model ARMA apa pun secara otomatis:
+
+```{r arma22-armaacf}
+ARMAacf(ar = c(phi1, phi2), ma = c(theta1, theta2), lag.max = 3)
+```
+
+Hasil korelasi dari data bangkitan (baik manual maupun `arima.sim`) terlihat mendekati nilai teoritis di atas, dan pola korelasinya meluruh bertahap (tails off) khas proses ARMA — tidak terputus tajam seperti MA murni, dan tidak mengikuti rekursi AR murni karena masih ada pengaruh komponen MA di lag-lag awal.
+
+---
+
+# Kesimpulan
+
+| Proses | ACF | PACF | EACF (segitiga nol) | Stasioner |
+|---|---|---|---|---|
+| MA(2): $\theta_1=0.4,\ \theta_2=0.6$ | cuts off di lag 2 | tails off | AR(0), MA(2) | Ya |
+| AR(2): $\phi_1=0.5,\ \phi_2=0.2$ | tails off | cuts off di lag 2 | AR(2), MA(0) | Ya |
+| ARMA(2,2) | tails off | tails off | AR(2), MA(2) | Ya |
+
+Pola ACF dan PACF hasil simulasi konsisten dengan teori: MA(q) memotong ACF di lag q, AR(p) memotong PACF di lag p, dan ARMA(p,q) membuat keduanya meluruh bertahap.
