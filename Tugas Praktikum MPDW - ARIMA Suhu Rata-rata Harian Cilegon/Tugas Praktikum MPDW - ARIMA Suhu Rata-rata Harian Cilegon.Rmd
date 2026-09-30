@@ -1,0 +1,643 @@
+---
+title: "Tugas Praktikum MPDW - ARIMA Suhu Rata-rata Harian Cilegon"
+author: "Dzulfikar Najib"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center"
+)
+
+library(forecast)
+library(tseries)
+library(TSA)
+library(lmtest)
+library(MASS)
+library(FinTS)
+
+tafsir <- function(p, ok, no) {
+  ifelse(p > 0.05, ok, no)
+}
+```
+
+# 1. Pembagian Data
+
+Data yang digunakan adalah data suhu rata-rata harian Kota Cilegon (`Suhu_Rata2_C`).
+Data dimulai dari 1 Januari 2024. Data dibagi menjadi data *train* untuk membangun
+model dan data *test* untuk mengevaluasi hasil peramalan.
+
+Pembagian data menggunakan **90% data sebagai train dan 10% sebagai test**.
+Pembagian ini digunakan agar data *train* cukup panjang untuk mengidentifikasi
+pola autokorelasi, sementara data *test* tetap tersedia untuk mengevaluasi
+kemampuan peramalan.
+
+```{r pembagian-data}
+df <- read.csv("cuaca_cilegon_10_tahun.csv")
+
+df$Tanggal <- as.Date(df$Tanggal)
+
+dat <- df[
+  df$Tanggal >= as.Date("2024-01-01") &
+    !is.na(df$Suhu_Rata2_C),
+  c("Tanggal", "Suhu_Rata2_C")
+]
+
+dat <- dat[order(dat$Tanggal), ]
+
+n <- nrow(dat)
+n_train <- floor(0.90 * n)
+
+train <- dat[1:n_train, ]
+test  <- dat[(n_train + 1):n, ]
+
+y_raw <- ts(train$Suhu_Rata2_C)
+
+cat("Jumlah seluruh data :", n, "\n")
+cat("Jumlah data train   :", nrow(train), "\n")
+cat("Jumlah data test    :", nrow(test), "\n")
+cat("Periode data        :", min(dat$Tanggal), "s.d.", max(dat$Tanggal), "\n")
+```
+
+```{r plot-pembagian}
+plot(
+  dat$Tanggal[1:n_train],
+  train$Suhu_Rata2_C,
+  type = "l",
+  col = "blue",
+  xlim = range(dat$Tanggal),
+  ylim = range(dat$Suhu_Rata2_C),
+  xlab = "Tanggal",
+  ylab = "Suhu Rata-rata (°C)",
+  main = "Pembagian Data Train dan Test"
+)
+
+lines(
+  test$Tanggal,
+  test$Suhu_Rata2_C,
+  col = "red"
+)
+
+legend(
+  "topright",
+  legend = c("Train", "Test"),
+  col = c("blue", "red"),
+  lty = 1,
+  bty = "n"
+)
+```
+
+**Interpretasi:** Terdapat `r n` amatan dari `r min(dat$Tanggal)` sampai
+`r max(dat$Tanggal)`. Sebanyak `r n_train` amatan digunakan sebagai data *train* dan
+`r nrow(test)` amatan digunakan sebagai data *test*.
+
+# 2. Pemeriksaan Stasioneritas Data Train
+
+## 2.1 Stasioneritas Ragam dengan Box-Cox
+
+Stasioneritas ragam diperiksa menggunakan analisis Box-Cox. Jika selang
+kepercayaan 95% untuk parameter Box-Cox mengandung angka 1, data dianggap
+tidak memerlukan transformasi untuk menstabilkan ragam.
+
+```{r box-cox}
+bc <- boxcox(
+  y_raw ~ 1,
+  lambda = seq(-10, 10, by = 0.01),
+  plotit = TRUE
+)
+
+lambda_opt <- bc$x[which.max(bc$y)]
+
+ci_bc <- range(
+  bc$x[
+    bc$y > max(bc$y) - qchisq(0.95, 1) / 2
+  ]
+)
+
+lambda_opt
+ci_bc
+```
+
+```{r keputusan-box-cox}
+ragam_stasioner <- ci_bc[1] <= 1 && ci_bc[2] >= 1
+
+if (ragam_stasioner) {
+  lambda_used <- 1
+  y_var <- y_raw
+} else {
+  lambda_used <- lambda_opt
+  y_var <- BoxCox(y_raw, lambda = lambda_used)
+}
+
+cat("Lambda optimum :", round(lambda_opt, 3), "\n")
+cat("CI 95%         :", round(ci_bc[1], 3), "sampai", round(ci_bc[2], 3), "\n")
+cat("Stasioner ragam :", ragam_stasioner, "\n")
+```
+
+**Interpretasi:** Nilai lambda optimum adalah `r round(lambda_opt, 2)` dengan
+selang kepercayaan 95% sebesar [`r round(ci_bc[1], 2)`; `r round(ci_bc[2], 2)`].
+Selang kepercayaan tersebut `r ifelse(ragam_stasioner,
+"memuat angka 1, sehingga transformasi Box-Cox tidak diperlukan.",
+"tidak memuat angka 1, sehingga transformasi Box-Cox dilakukan menggunakan lambda optimum.")`
+
+## 2.2 Stasioneritas Rataan dengan ACF dan ADF
+
+Stasioneritas rataan diperiksa menggunakan ACF dan uji Augmented Dickey-Fuller
+(ADF). Pada uji ADF, hipotesis nol menyatakan bahwa data memiliki unit root
+(tidak stasioner).
+
+```{r acf-adf}
+acf(
+  y_var,
+  main = "ACF Data Train"
+)
+
+adf <- adf.test(y_var)
+
+adf
+```
+
+```{r keputusan-adf}
+mean_stasioner <- adf$p.value < 0.05
+
+cat("ADF p-value :", format.pval(adf$p.value), "\n")
+cat("Stasioner rataan :", mean_stasioner, "\n")
+```
+
+**Interpretasi:** Uji ADF menghasilkan p-value `r format.pval(adf$p.value)`.
+Nilai tersebut `r ifelse(mean_stasioner,
+"lebih kecil dari 0,05 sehingga H0 ditolak dan data dianggap stasioner dalam rataan.",
+"lebih besar dari 0,05 sehingga H0 tidak ditolak dan data belum stasioner dalam rataan.")`
+
+# 3. Penanganan Ketidakstasioneran
+
+Penanganan dilakukan sesuai hasil pemeriksaan pada tahap sebelumnya:
+
+- Jika ragam belum stasioner, dilakukan transformasi Box-Cox.
+- Jika rataan belum stasioner, dilakukan diferensiasi.
+- Jika keduanya sudah stasioner, tidak dilakukan transformasi maupun diferensiasi.
+
+```{r penanganan-stasioneritas}
+if (!ragam_stasioner) {
+  y <- y_var
+} else {
+  y <- y_raw
+}
+
+if (!mean_stasioner) {
+  d <- ndiffs(y, test = "adf")
+  y_model <- diff(y, differences = d)
+} else {
+  d <- 0
+  y_model <- y
+}
+
+cat("Orde diferensiasi d =", d, "\n")
+```
+
+**Interpretasi:** Berdasarkan hasil pengujian, `r ifelse(ragam_stasioner,
+"ragam sudah dianggap stasioner sehingga tidak dilakukan transformasi Box-Cox.",
+"ragam belum stasioner sehingga transformasi Box-Cox dilakukan.")`
+Untuk rataan, `r ifelse(d == 0,
+"data sudah stasioner sehingga tidak dilakukan diferensiasi.",
+paste0("data belum stasioner sehingga dilakukan diferensiasi sebanyak ", d, " kali."))`
+
+# 4. Identifikasi Model Potensial
+
+Setelah data dibuat stasioner, identifikasi model dilakukan menggunakan ACF,
+PACF, dan EACF.
+
+```{r acf-pacf}
+par(mfrow = c(1, 2))
+
+acf(
+  y_model,
+  main = "ACF Data Stasioner"
+)
+
+pacf(
+  y_model,
+  main = "PACF Data Stasioner"
+)
+
+par(mfrow = c(1, 1))
+```
+
+```{r eacf}
+eacf(y_model)
+```
+
+**Interpretasi:** ACF dan PACF digunakan untuk melihat pola ketergantungan
+antaramatan dan menentukan orde AR serta MA yang layak dipertimbangkan.
+EACF digunakan sebagai informasi tambahan dalam menentukan kandidat model
+ARMA/ARIMA.
+
+> **Catatan:** Kandidat model pada bagian berikut dibuat berdasarkan pola
+> ACF, PACF, dan EACF. Untuk data ini, kandidat yang diperiksa adalah model
+> ARIMA(1,d,0), ARIMA(1,d,1), ARIMA(1,d,2), dan ARIMA(2,d,1).
+
+```{r kandidat-model}
+kand <- list(
+  c(1, d, 0),
+  c(1, d, 1),
+  c(1, d, 2),
+  c(2, d, 1)
+)
+
+model_names <- sapply(
+  kand,
+  function(o) paste0("ARIMA(", paste(o, collapse = ","), ")")
+)
+
+model_names
+```
+
+# 5. Pendugaan Parameter dan Pemilihan Model
+
+Setiap model kandidat diduga menggunakan fungsi `Arima()`. Model diperiksa
+berdasarkan signifikansi parameter dan nilai AIC.
+
+```{r estimasi-model}
+fits <- lapply(
+  kand,
+  function(o) {
+    Arima(
+      y,
+      order = o,
+      include.mean = (o[2] == 0)
+    )
+  }
+)
+
+for (i in seq_along(fits)) {
+  cat("\n", model_names[i], "\n", sep = "")
+  print(coeftest(fits[[i]]))
+}
+```
+
+```{r tabel-model}
+sig_all <- sapply(
+  fits,
+  function(f) {
+    pval <- coeftest(f)[, 4]
+    all(pval < 0.05)
+  }
+)
+
+tab_model <- data.frame(
+  Model = model_names,
+  AIC = sapply(fits, AIC),
+  Semua_Parameter_Signifikan =
+    ifelse(sig_all, "Ya", "Tidak")
+)
+
+tab_model
+```
+
+Model yang dipilih adalah model dengan parameter yang signifikan dan AIC
+terkecil di antara model yang memenuhi kriteria signifikansi.
+
+```{r pilih-model}
+ok <- which(sig_all)
+
+if (length(ok) == 0) {
+  # Jika tidak ada model yang seluruh parameternya signifikan,
+  # gunakan AIC terkecil dan beri catatan pada interpretasi.
+  idx <- which.min(tab_model$AIC)
+  alasan_pemilihan <- "Tidak ada kandidat dengan seluruh parameter signifikan; model dipilih berdasarkan AIC terkecil."
+} else {
+  idx <- ok[which.min(tab_model$AIC[ok])]
+  alasan_pemilihan <- "Model dipilih dari kandidat dengan seluruh parameter signifikan dan AIC terkecil."
+}
+
+best_order <- kand[[idx]]
+best <- fits[[idx]]
+best_name <- model_names[idx]
+
+cat("Model terpilih :", best_name, "\n")
+cat("AIC            :", round(AIC(best), 3), "\n")
+cat("Alasan         :", alasan_pemilihan, "\n")
+```
+
+```{r parameter-model-terbaik}
+coeftest(best)
+```
+
+**Interpretasi:** Berdasarkan kriteria signifikansi parameter dan AIC, model
+yang dipilih adalah **`r best_name`** dengan AIC sebesar `r round(AIC(best), 3)`.
+`r alasan_pemilihan`
+
+# 6. Analisis Sisaan
+
+Setelah model diperoleh, dilakukan pemeriksaan terhadap sisaan untuk melihat
+apakah sisaan sudah menyerupai *white noise*. Pemeriksaan meliputi plot
+sisaan, ACF sisaan, QQ-plot, uji Ljung-Box, uji ARCH-LM, dan uji
+Shapiro-Wilk.
+
+```{r analisis-sisaan}
+res <- as.numeric(residuals(best))
+
+par(mfrow = c(1, 3))
+
+plot(
+  res,
+  type = "l",
+  main = "Sisaan vs Waktu",
+  xlab = "Waktu",
+  ylab = "Sisaan"
+)
+abline(h = 0, lty = 2)
+
+acf(
+  res,
+  main = "ACF Sisaan"
+)
+
+qqnorm(
+  res,
+  main = "QQ-Plot Sisaan"
+)
+qqline(res)
+
+par(mfrow = c(1, 1))
+```
+
+```{r uji-sisaan}
+lb <- Box.test(
+  res,
+  lag = 20,
+  type = "Ljung-Box",
+  fitdf = best_order[1] + best_order[3]
+)
+
+arch <- ArchTest(res)
+
+sw <- shapiro.test(res)
+
+lb
+arch
+sw
+```
+
+**Interpretasi Ljung-Box:** p-value = `r signif(lb$p.value, 4)`.
+`r tafsir(lb$p.value,
+"Nilai p-value lebih besar dari 0,05 sehingga tidak terdapat bukti autokorelasi pada sisaan. Sisaan dapat dianggap tidak berkorelasi.",
+"Nilai p-value lebih kecil dari 0,05 sehingga masih terdapat autokorelasi pada sisaan.")`
+
+**Interpretasi ARCH-LM:** p-value = `r signif(arch$p.value, 4)`.
+`r tafsir(arch$p.value,
+"Nilai p-value lebih besar dari 0,05 sehingga tidak terdapat bukti efek ARCH pada sisaan.",
+"Nilai p-value lebih kecil dari 0,05 sehingga terdapat indikasi efek ARCH atau ragam sisaan tidak konstan.")`
+
+**Interpretasi Shapiro-Wilk:** p-value = `r signif(sw$p.value, 4)`.
+`r tafsir(sw$p.value,
+"Nilai p-value lebih besar dari 0,05 sehingga tidak terdapat bukti yang cukup untuk menolak normalitas sisaan.",
+"Nilai p-value lebih kecil dari 0,05 sehingga sisaan tidak mengikuti distribusi normal.")`
+
+# 7. Uji Overfitting
+
+Overfitting diperiksa dengan menaikkan orde AR sebanyak satu dan orde MA
+sebanyak satu dari model terpilih. Model hasil penambahan dibandingkan
+dengan model awal berdasarkan signifikansi parameter tambahan dan AIC.
+
+```{r overfitting}
+p <- best_order[1]
+q <- best_order[3]
+
+# Model dengan orde AR ditambah satu
+f_ar <- tryCatch(
+  Arima(
+    y,
+    order = c(p + 1, d, q),
+    include.mean = (d == 0)
+  ),
+  error = function(e) NULL
+)
+
+# Model dengan orde MA ditambah satu
+f_ma <- tryCatch(
+  Arima(
+    y,
+    order = c(p, d, q + 1),
+    include.mean = (d == 0)
+  ),
+  error = function(e) NULL
+)
+
+ov_list <- list(
+  AR = f_ar,
+  MA = f_ma
+)
+
+# Ambil p-value parameter tambahan dengan aman
+get_extra_p <- function(fit, par_name) {
+  if (is.null(fit)) return(NA_real_)
+
+  ct <- tryCatch(coeftest(fit), error = function(e) NULL)
+
+  if (is.null(ct) || !(par_name %in% rownames(ct))) {
+    return(NA_real_)
+  }
+
+  ct[par_name, 4]
+}
+
+p_ar_extra <- get_extra_p(f_ar, paste0("ar", p + 1))
+p_ma_extra <- get_extra_p(f_ma, paste0("ma", q + 1))
+
+ov_tab <- data.frame(
+  Model = c(
+    paste0("ARIMA(", p + 1, ",", d, ",", q, ")"),
+    paste0("ARIMA(", p, ",", d, ",", q + 1, ")")
+  ),
+  AIC = c(
+    ifelse(is.null(f_ar), NA, AIC(f_ar)),
+    ifelse(is.null(f_ma), NA, AIC(f_ma))
+  ),
+  Parameter_Tambahan = c(
+    paste0("ar", p + 1),
+    paste0("ma", q + 1)
+  ),
+  p_value = c(
+    p_ar_extra,
+    p_ma_extra
+  )
+)
+
+ov_tab$Signifikan <- ifelse(
+  is.na(ov_tab$p_value),
+  "Model gagal diestimasi",
+  ifelse(ov_tab$p_value < 0.05, "Ya", "Tidak")
+)
+
+ov_tab
+AIC(best)
+```
+
+```{r keputusan-overfitting}
+over_ok <- all(
+  !is.na(ov_tab$p_value),
+  ov_tab$p_value > 0.05,
+  ov_tab$AIC >= AIC(best)
+)
+
+if (over_ok) {
+  kesimpulan_over <- paste0(
+    "Kedua parameter tambahan tidak signifikan dan AIC model yang lebih kompleks ",
+    "tidak lebih kecil daripada model awal. Dengan demikian tidak terdapat ",
+    "indikasi bahwa penambahan orde memberikan perbaikan model yang diperlukan, ",
+    "sehingga ", best_name, " tetap digunakan."
+  )
+} else if (any(is.na(ov_tab$p_value))) {
+  kesimpulan_over <- paste0(
+    "Salah satu model overfitting tidak berhasil diestimasi sehingga pemeriksaan ",
+    "overfitting tidak dapat dinyatakan lengkap berdasarkan kedua model tambahan."
+  )
+} else {
+  kesimpulan_over <- paste0(
+    "Terdapat model yang memiliki parameter tambahan signifikan atau AIC lebih ",
+    "kecil daripada model awal. Oleh karena itu hasil overfitting perlu ",
+    "dipertimbangkan kembali sebelum model akhir ditetapkan."
+  )
+}
+
+kesimpulan_over
+```
+
+**Interpretasi:** Pada model awal **`r best_name`** dengan AIC
+`r round(AIC(best), 3)`, penambahan orde menghasilkan p-value parameter
+tambahan sebesar `r paste(ifelse(is.na(ov_tab$p_value), "NA", round(ov_tab$p_value, 4)), collapse = " dan ")`.
+
+`r kesimpulan_over`
+
+# 8. Peramalan dan Evaluasi Data Test
+
+Setelah model akhir ditetapkan, dilakukan peramalan sebanyak jumlah pengamatan
+pada data *test*. Hasil ramalan kemudian dibandingkan dengan nilai aktual
+menggunakan MAE, RMSE, dan MAPE.
+
+```{r forecasting}
+h <- nrow(test)
+
+fc <- forecast(
+  best,
+  h = h,
+  level = 95
+)
+
+pred <- as.numeric(fc$mean)
+act <- test$Suhu_Rata2_C
+
+akurasi <- c(
+  MAE = mean(abs(act - pred)),
+  RMSE = sqrt(mean((act - pred)^2)),
+  MAPE = mean(abs((act - pred) / act)) * 100
+)
+
+round(akurasi, 3)
+```
+
+```{r plot-forecast}
+plot(
+  fc,
+  include = min(150, length(y)),
+  main = paste("Peramalan", best_name),
+  ylab = "Suhu Rata-rata (°C)",
+  xlab = "Waktu"
+)
+
+lines(
+  (length(y) + 1):(length(y) + h),
+  act,
+  col = "red"
+)
+
+legend(
+  "topleft",
+  legend = c("Ramalan", "Aktual (Test)"),
+  col = c("blue", "red"),
+  lty = 1,
+  bty = "n"
+)
+```
+
+Sebagai pembanding sederhana, digunakan ramalan naif berupa nilai terakhir
+data *train*.
+
+```{r baseline}
+naive_pred <- rep(tail(y, 1), h)
+
+akurasi_naive <- c(
+  MAE = mean(abs(act - naive_pred)),
+  RMSE = sqrt(mean((act - naive_pred)^2)),
+  MAPE = mean(abs((act - naive_pred) / act)) * 100
+)
+
+data.frame(
+  Ukuran = names(akurasi),
+  ARIMA = round(akurasi, 3),
+  Naive = round(akurasi_naive, 3)
+)
+```
+
+**Interpretasi:** Peramalan sebanyak `r h` hari menghasilkan MAE sebesar
+`r round(akurasi["MAE"], 3)`, RMSE sebesar `r round(akurasi["RMSE"], 3)`,
+dan MAPE sebesar `r round(akurasi["MAPE"], 2)`%.
+
+Sebagai pembanding, metode naif menghasilkan MAE sebesar
+`r round(akurasi_naive["MAE"], 3)`, RMSE sebesar
+`r round(akurasi_naive["RMSE"], 3)`, dan MAPE sebesar
+`r round(akurasi_naive["MAPE"], 2)`%.
+
+# Kesimpulan
+
+Berdasarkan seluruh tahapan analisis, data suhu rata-rata harian Cilegon
+yang digunakan terdiri dari `r n` amatan dan memenuhi syarat minimal 500
+amatan. Data dibagi menjadi `r n_train` amatan untuk data *train* dan
+`r nrow(test)` amatan untuk data *test*.
+
+Pemeriksaan Box-Cox menghasilkan lambda optimum sebesar
+`r round(lambda_opt, 2)` dengan selang kepercayaan 95% sebesar
+[`r round(ci_bc[1], 2)`; `r round(ci_bc[2], 2)`].
+`r ifelse(ragam_stasioner,
+"Selang tersebut memuat angka 1 sehingga tidak dilakukan transformasi Box-Cox.",
+"Selang tersebut tidak memuat angka 1 sehingga dilakukan transformasi Box-Cox.")`
+
+Uji ADF menghasilkan p-value `r format.pval(adf$p.value)`.
+`r ifelse(mean_stasioner,
+"Data dianggap stasioner dalam rataan sehingga tidak diperlukan diferensiasi.",
+"Data belum stasioner dalam rataan sehingga dilakukan diferensiasi.")`
+
+Berdasarkan ACF, PACF, dan EACF, beberapa model potensial kemudian
+diestimasi. Model yang dipilih adalah **`r best_name`** dengan AIC sebesar
+`r round(AIC(best), 3)`.
+
+Pada analisis sisaan, uji Ljung-Box menghasilkan p-value
+`r round(lb$p.value, 4)`, uji ARCH-LM menghasilkan p-value
+`r round(arch$p.value, 4)`, dan uji Shapiro-Wilk menghasilkan p-value
+`r format.pval(sw$p.value)`.
+
+Uji overfitting dilakukan dengan menambahkan satu orde AR dan satu orde MA.
+Hasilnya adalah sebagai berikut:
+
+`r kesimpulan_over`
+
+Pada data *test*, model menghasilkan MAE sebesar
+`r round(akurasi["MAE"], 3)`, RMSE sebesar
+`r round(akurasi["RMSE"], 3)`, dan MAPE sebesar
+`r round(akurasi["MAPE"], 2)`%.
+
+Dengan demikian, seluruh tahapan pembuatan model ARIMA yang diminta dalam
+praktikum telah dilakukan, mulai dari pembagian data, pemeriksaan
+stasioneritas, penanganan ketidakstasioneran, identifikasi model,
+pendugaan dan pemilihan model, analisis sisaan, uji overfitting, hingga
+peramalan dan evaluasi pada data *test*.
